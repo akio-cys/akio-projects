@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Link as LinkIcon, Music, Mic, Lock, Edit, Trash2, Layers } from 'lucide-react';
-import { setItemDB, getItemDB } from '../db';
+import { Upload, Link as LinkIcon, Music, Mic, Lock, Edit, Trash2, Layers, Loader } from 'lucide-react';
+import { setItemDB, getItemDB, uploadMediaToStorage } from '../db';
 
 export default function Admin() {
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
   const [inputMode, setInputMode] = useState('upload'); // 'upload' or 'url'
   const [preview, setPreview] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   
+  const [rawFile, setRawFile] = useState(null);
   const [formData, setFormData] = useState({
     title: '', desc: '', price: '', type: 'Image', mediaUrl: '', mediaData: ''
   });
@@ -18,12 +21,14 @@ export default function Admin() {
   // Category Form State
   const [catName, setCatName] = useState('');
   const [catImage, setCatImage] = useState('');
+  const [rawCatImage, setRawCatImage] = useState(null);
   const [dragCat, setDragCat] = useState(false);
 
   // Settings
   const [settings, setSettings] = useState({ bgMusic: '' });
   const [dragBg, setDragBg] = useState(false);
   const [tempBgMusic, setTempBgMusic] = useState(null);
+  const [rawBgMusic, setRawBgMusic] = useState(null);
 
   // Auth
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -50,13 +55,10 @@ export default function Admin() {
 
   const processFile = (file) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target.result;
-      setFormData(f => ({ ...f, mediaData: dataUrl, mediaUrl: '' }));
-      setPreview(dataUrl);
-    };
-    reader.readAsDataURL(file);
+    setRawFile(file);
+    const dataUrl = URL.createObjectURL(file);
+    setFormData(f => ({ ...f, mediaData: dataUrl, mediaUrl: '' }));
+    setPreview(dataUrl);
   };
 
   const handleFile = (e) => processFile(e.target.files[0]);
@@ -74,7 +76,26 @@ export default function Admin() {
 
   const handleAdd = async (e) => {
     e.preventDefault();
-    const finalMedia = inputMode === 'upload' ? formData.mediaData : formData.mediaUrl;
+    if (isLoading) return;
+    
+    let finalMedia = formData.mediaUrl;
+    
+    if (inputMode === 'upload' && rawFile) {
+      setIsLoading(true);
+      setToastMessage('⏳ جاري رفع الملفات إلى الخوادم... يرجى الانتظار');
+      setShowToast(true);
+      try {
+        finalMedia = await uploadMediaToStorage(rawFile, 'portfolio');
+      } catch (err) {
+        alert("⚠️ فشل رفع الملف: " + err.message);
+        setIsLoading(false);
+        setShowToast(false);
+        return;
+      }
+    } else if (inputMode === 'upload' && formData.mediaData) {
+      finalMedia = formData.mediaData; // fallback
+    }
+
     if (!finalMedia && !editingId) { alert('من فضلك أضف ملف أو رابط الوسائط'); return; }
 
     const updatedItem = {
@@ -94,15 +115,23 @@ export default function Admin() {
     }
     
     try {
+      setIsLoading(true);
+      setToastMessage('⏳ جاري الحفظ في قاعدة البيانات...');
+      setShowToast(true);
+      
       await setItemDB('portfolioData', updated);
       setItems(updated);
       setFormData({ title: '', desc: '', price: '', type: formData.type, mediaUrl: '', mediaData: '' });
       setPreview(null);
+      setRawFile(null);
       setEditingId(null);
-      setShowToast(true);
+      
+      setToastMessage('✨ تم حفظ التغييرات عالمياً بنجاح!');
       setTimeout(() => setShowToast(false), 3000);
     } catch(err) {
-      alert("⚠️ حدث خطأ أثناء الحفظ! تأكد من حجم الملف.");
+      alert("⚠️ حدث خطأ أثناء الحفظ!");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -130,21 +159,37 @@ export default function Admin() {
 
   const processBgMusicPreview = (file) => {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      setTempBgMusic(ev.target.result);
-    };
-    reader.readAsDataURL(file);
+    setRawBgMusic(file);
+    setTempBgMusic(URL.createObjectURL(file));
   };
 
   const confirmBgMusic = async () => {
-    if (!tempBgMusic) return;
-    const newSettings = { ...settings, bgMusic: tempBgMusic };
-    setSettings(newSettings);
-    await setItemDB('siteSettings', newSettings);
-    window.dispatchEvent(new Event('bgMusicUpdated'));
+    if (!rawBgMusic && !tempBgMusic) return;
+    
+    setIsLoading(true);
+    setToastMessage('⏳ جاري رفع مقطع الموسيقى...');
     setShowToast(true);
-    setTempBgMusic(null);
+    
+    try {
+      let url = tempBgMusic;
+      if (rawBgMusic) {
+        url = await uploadMediaToStorage(rawBgMusic, 'settings');
+      }
+      
+      const newSettings = { ...settings, bgMusic: url };
+      setSettings(newSettings);
+      await setItemDB('siteSettings', newSettings);
+      window.dispatchEvent(new Event('bgMusicUpdated'));
+      
+      setToastMessage('✨ تم تعيين موسيقى الخلفية عالمياً!');
+      setTimeout(() => setShowToast(false), 3000);
+      setTempBgMusic(null);
+      setRawBgMusic(null);
+    } catch (e) {
+      alert("⚠️ فشل رفع المقطع: " + e.message);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleSettingChange = (e, key) => {
@@ -157,13 +202,31 @@ export default function Admin() {
 
   const handleAddCategory = async () => {
     if (!catName.trim()) return;
-    const newCat = { id: Date.now().toString(), name: catName, image: catImage };
-    const updated = [...categories, newCat];
-    setCategories(updated);
-    await setItemDB('customCategories', updated);
-    setCatName('');
-    setCatImage('');
-    alert('✅ تم إضافة القسم بنجاح!');
+    setIsLoading(true);
+    setToastMessage('⏳ جاري الحفظ...');
+    setShowToast(true);
+    
+    try {
+      let url = catImage;
+      if (rawCatImage) {
+        url = await uploadMediaToStorage(rawCatImage, 'categories');
+      }
+      
+      const newCat = { id: Date.now().toString(), name: catName, image: url };
+      const updated = [...categories, newCat];
+      setCategories(updated);
+      await setItemDB('customCategories', updated);
+      
+      setCatName('');
+      setCatImage('');
+      setRawCatImage(null);
+      setToastMessage('✅ تم إضافة القسم بنجاح!');
+      setTimeout(() => setShowToast(false), 3000);
+    } catch (e) {
+      alert("⚠️ فشل الحفظ: " + e.message);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleDeleteCategory = async (id) => {
@@ -176,9 +239,8 @@ export default function Admin() {
   const handleCatImage = (e) => {
     const file = e.target.files[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = ev => setCatImage(ev.target.result);
-      reader.readAsDataURL(file);
+      setRawCatImage(file);
+      setCatImage(URL.createObjectURL(file));
     }
   };
 
@@ -189,9 +251,8 @@ export default function Admin() {
     setDragCat(false);
     const file = e.dataTransfer.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = ev => setCatImage(ev.target.result);
-      reader.readAsDataURL(file);
+      setRawCatImage(file);
+      setCatImage(URL.createObjectURL(file));
     }
   };
 
@@ -237,7 +298,8 @@ export default function Admin() {
         boxShadow: '0 10px 30px rgba(157,0,255,0.5)', transition: 'bottom 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
         fontWeight: 'bold', zIndex: 1000, display: 'flex', alignItems: 'center', gap: '10px'
       }}>
-        ✨ تم نشر العمل بنجاح!
+        {isLoading && <Loader className="animate-spin" size={20} />}
+        {toastMessage || '✨ تم نشر العمل بنجاح!'}
       </div>
       <h2 className="header-title" style={{ fontSize: '2.4rem', marginBottom: '8px' }}>لوحة تحكم Akio </h2>
       <p style={{ color: 'var(--text-muted)', marginBottom: '30px' }}>أضف أعمالك، عدّل الأسعار، وارفع موسيقاك الخلفية بحرية.</p>
@@ -260,7 +322,7 @@ export default function Admin() {
           <div style={{marginTop: '20px', background: 'rgba(255,255,255,0.05)', padding: '15px', borderRadius: '15px', border: '1px solid rgba(157,0,255,0.4)', animation: 'modalPop 0.4s ease forwards'}}>
             <h5 style={{marginBottom: '10px', color: '#fff'}}>معاينة الصوت:</h5>
             <audio src={tempBgMusic} controls style={{width: '100%', marginBottom: '15px'}} />
-            <button type="button" onClick={confirmBgMusic} className="btn-admin" style={{padding: '10px', fontSize: '1.05rem'}}>
+            <button type="button" onClick={confirmBgMusic} disabled={isLoading} className="btn-admin" style={{padding: '10px', fontSize: '1.05rem', opacity: isLoading ? 0.6 : 1}}>
               ✅ اعتماد الصوت كموسيقى خلفية للموقع
             </button>
           </div>
@@ -366,11 +428,11 @@ export default function Admin() {
           )}
         </div>
 
-        <button type="submit" className="btn-admin" style={{ marginTop: '20px' }}>
-          {editingId ? '🔄 تحديث العمل الحالي' : '✨ نشر العمل الجديد'}
+        <button type="submit" disabled={isLoading} className="btn-admin" style={{ marginTop: '20px', opacity: isLoading ? 0.6 : 1 }}>
+          {isLoading ? '⏳ جاري الحفظ...' : (editingId ? '🔄 تحديث العمل الحالي' : '✨ نشر العمل الجديد')}
         </button>
-        {editingId && (
-          <button type="button" onClick={() => { setEditingId(null); setFormData({ title: '', desc: '', price: '', type: 'Image', mediaUrl: '', mediaData: '' }); setPreview(null); setInputMode('upload'); }} className="btn-admin" style={{ marginTop: '10px', background: 'var(--red)', color: 'white' }}>
+        {editingId && !isLoading && (
+          <button type="button" onClick={() => { setEditingId(null); setFormData({ title: '', desc: '', price: '', type: 'Image', mediaUrl: '', mediaData: '' }); setPreview(null); setRawFile(null); setInputMode('upload'); }} className="btn-admin" style={{ marginTop: '10px', background: 'var(--red)', color: 'white' }}>
             ✖️ إلغاء التعديل
           </button>
         )}
@@ -403,8 +465,8 @@ export default function Admin() {
             {dragCat ? '⬇️ أفلت الصورة هنا' : (catImage ? '✅ تم اختيار الغلاف' : '🖼️ إضافة غلاف (اسحب وأفلت هنا)')}
           </label>
         </div>
-        <button onClick={handleAddCategory} className="btn-admin" style={{ marginTop: '15px', background: 'linear-gradient(135deg, var(--primary-color), var(--secondary-color))' }}>
-          ➕ إضافة القسم
+        <button onClick={handleAddCategory} disabled={isLoading} className="btn-admin" style={{ marginTop: '15px', background: 'linear-gradient(135deg, var(--primary-color), var(--secondary-color))', opacity: isLoading ? 0.6 : 1 }}>
+          ➕ {isLoading ? 'جاري الإضافة...' : 'إضافة القسم'}
         </button>
 
         {categories.length > 0 && (

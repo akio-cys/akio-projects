@@ -1,45 +1,44 @@
-export const openDB = () => {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open('AkioDB', 1);
-    request.onupgradeneeded = (e) => {
-      e.target.result.createObjectStore('store');
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-};
+import { db, storage } from './firebase';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 export const setItemDB = async (key, val) => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction('store', 'readwrite');
-    const store = transaction.objectStore('store');
-    const req = store.put(val, key);
-    req.onsuccess = () => resolve(true);
-    req.onerror = () => reject(req.error);
-  });
+  try {
+    await setDoc(doc(db, "akioStore", key), { data: val });
+    return true;
+  } catch (error) {
+    console.error("Firebase Set Error:", error);
+    throw error;
+  }
 };
 
 export const getItemDB = async (key) => {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction('store', 'readonly');
-    const store = transaction.objectStore('store');
-    const req = store.get(key);
-    req.onsuccess = async () => {
-      let result = req.result;
-      if (!result) {
-        // Migration from localStorage
-        const oldData = localStorage.getItem(key);
-        if (oldData) {
-          try {
-            result = JSON.parse(oldData);
-            await setItemDB(key, result);
-          } catch(e) {}
-        }
+  try {
+    const docRef = doc(db, "akioStore", key);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return docSnap.data().data;
+    } else {
+      // Fallback for old local data migration
+      const oldData = localStorage.getItem(key);
+      if (oldData) {
+        try {
+          const result = JSON.parse(oldData);
+          await setItemDB(key, result);
+          return result;
+        } catch(e) {}
       }
-      resolve(result);
-    };
-    req.onerror = () => reject(req.error);
-  });
+      return null;
+    }
+  } catch (error) {
+    console.error("Firebase Get Error:", error);
+    return null;
+  }
+};
+
+export const uploadMediaToStorage = async (file, pathPrefix = 'media') => {
+  if (!file) return null;
+  const fileRef = ref(storage, `${pathPrefix}/${Date.now()}_${file.name}`);
+  await uploadBytes(fileRef, file);
+  return await getDownloadURL(fileRef);
 };
