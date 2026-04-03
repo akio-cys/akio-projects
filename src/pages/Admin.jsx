@@ -199,7 +199,7 @@ export default function Admin() {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    if (password === 'akio') {
+    if (password === 'akio200511') {
       sessionStorage.setItem('akio_admin_auth', 'true');
       setIsAuthenticated(true);
     } else {
